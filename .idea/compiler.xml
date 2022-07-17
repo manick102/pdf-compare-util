@@ -8,6 +8,7 @@
         <outputRelativeToContentRoot value="true" />
         <module name="pdf-compare-util-develop" />
         <module name="Pdf-util" />
+        <module name="pdf-util" />
       </profile>
     </annotationProcessing>
   </component>
