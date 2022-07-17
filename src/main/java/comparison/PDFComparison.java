@@ -3,6 +3,7 @@ package comparison;
 //import de.redsix.pdfcompare.PdfComparator;
 import org.apache.pdfbox.multipdf.PDFMergerUtility;
 import com.juliusbaer.itasia.tes.pdfcompare.PdfComparator;
+import org.apache.pdfbox.pdmodel.PDDocument;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,13 +30,21 @@ public class PDFComparison {
                 File astA = Arrays.stream(beforeFiles)
                         .filter(fs -> fs.getName().startsWith("AST_B_Stmt"+ identifier))
                         .findFirst().get();
+
+
                 File secB = Arrays.stream(beforeFiles)
                         .filter(fs -> fs.getName().startsWith("SEC_B_Stmt"+ identifier))
                         .findFirst().get();
 
-                        PDFMergerUtility ut = new PDFMergerUtility();
+//                PDDocument document = new PDDocument();
+                PDDocument document = PDDocument.load(secB);
+                document.removePage(0);
+                document.save("/Users/arunpandian/IdeaProjects/pdf-compare-util/src/main/resources/before/SEC_B_RemPage1" + identifier + ".pdf");
+                document.close();
+
+                PDFMergerUtility ut = new PDFMergerUtility();
                 ut.addSource(astA.getAbsolutePath());
-                ut.addSource(secB.getAbsolutePath());
+                ut.addSource("/Users/arunpandian/IdeaProjects/pdf-compare-util/src/main/resources/before/SEC_B_RemPage1" + identifier + ".pdf");
                 ut.setDestinationFileName("/Users/arunpandian/IdeaProjects/pdf-compare-util/src/main/resources/after/Merged_" + identifier + ".pdf");
                 ut.mergeDocuments();
 
