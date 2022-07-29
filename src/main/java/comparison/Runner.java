@@ -2,6 +2,7 @@ package comparison;
 
 import com.juliusbaer.itasia.tes.pdfcompare.CompareResult;
 import com.juliusbaer.itasia.tes.pdfcompare.PdfComparator;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pdfbox.multipdf.PDFMergerUtility;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.poi.common.usermodel.HyperlinkType;
@@ -12,6 +13,7 @@ import org.testng.annotations.AfterSuite;
 import org.testng.annotations.BeforeSuite;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
+import utility.PDFUtil;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -20,6 +22,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -38,7 +41,8 @@ public class Runner {
 
     private static XSSFWorkbook wb;
     private static XSSFSheet sheet;
-    private static File[] beforeFiles = readBeforeFiles();
+    private static File[] beforeAssetFiles = readBeforeAssetFiles();
+    private static File[] beforeSMRFiles = readBeforeSMRFiles();
 
     private static File[] tapFiles = readTapFiles();
 
@@ -75,24 +79,27 @@ public class Runner {
         System.out.println(identifier);
         System.out.println(rownum);
 
-        File file = Arrays.stream(tapFiles).filter(fs -> fs.getName().startsWith(identifier)).findFirst().get();
+        File tapFile = Arrays.stream(tapFiles).filter(fs -> fs.getName().startsWith(identifier)).findFirst().get();
 
-        File astA = Arrays.stream(beforeFiles)
-                .filter(fs -> fs.getName().startsWith(identifier) && fs.getName().endsWith("Y.pdf"))
-                .findFirst().get();
+        File assetFile = Arrays.stream(beforeAssetFiles).filter(fs -> fs.getName().startsWith(identifier)).findFirst().get();
 
-        File secB = Arrays.stream(beforeFiles)
-                .filter(fs -> fs.getName().startsWith(identifier) && !fs.getName().endsWith("Y.pdf"))
-                .findFirst().get();
+        File smrFile = Arrays.stream(beforeSMRFiles).filter(fs -> fs.getName().startsWith(identifier)).findFirst().get();
 
-        removeFirstPageAndSave(secB, identifier);
-        mergeAstAndSecFiles(astA,identifier);
-        CompareResult result = getComparedResult(file,identifier);
-        updateExcelSheetWithResult(astA,secB,file,identifier,result,rownum);
+
+        String mergingFilePathOne = assetFile.getAbsolutePath();
+        String mergingFilePathTwo = getRequiredBeforeSMRFilePath(T24_SECB_REM_PAGE_1_PREFIX + identifier + ".pdf");
+        String destinationFilePath = getRequiredAfterFilePath(MERGED_FILE_PREFIX + identifier + ".pdf");
+        String resultFilePath = RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier;
+
+        removeFirstPageAndSave(smrFile,mergingFilePathTwo, identifier);
+        mergeAstAndSecFiles(mergingFilePathOne,mergingFilePathTwo, destinationFilePath);
+        CompareResult result = getComparedResult(tapFile.getAbsolutePath(), destinationFilePath, resultFilePath);
+        String differences = getAllDifferences(tapFile.getAbsolutePath(), destinationFilePath, result);
+        updateExcelSheetWithResult(assetFile, smrFile, tapFile, identifier, result, rownum, differences);
 
     }
 
-    @DataProvider(name = "comparableTapFiles" , parallel = true)
+    @DataProvider(name = "comparableTapFiles", parallel = true)
     public Object[][] getComparableTapFilesIdentifiers() {
         AtomicInteger index = new AtomicInteger(1);
         return Arrays.stream(readTapFiles()).filter(val -> val.getName().endsWith(".pdf")).map(file -> {
@@ -104,29 +111,30 @@ public class Runner {
     }
 
 
-    private static void updateExcelSheetWithResult(File astA, File secB, File file, String identifier, CompareResult result, int rownum) {
+    private static void updateExcelSheetWithResult(File assetFile, File smrFile, File tapFile, String identifier, CompareResult result, int rownum, String differences) {
         CreationHelper createHelper = wb.getCreationHelper();
         XSSFRow row = sheet.createRow(rownum);
         row.createCell(0).setCellValue("" + rownum);
-        row.createCell(1).setCellValue(astA.getName());
-        row.createCell(2).setCellValue(secB.getName());
-        row.createCell(3).setCellValue(T24_SECB_REM_PAGE_1_PREFIX + identifier);
-        row.createCell(4).setCellValue(file.getName());
-        row.createCell(6).setCellValue(result.isEqual() ? "" : result.getPagesWithDifferences().toString());
+        row.createCell(1).setCellValue(assetFile.getName());
+        row.createCell(2).setCellValue(smrFile.getName());
+        row.createCell(3).setCellValue(tapFile.getName());
 
         XSSFHyperlink link = (XSSFHyperlink) createHelper.createHyperlink(HyperlinkType.FILE);
-        row.createCell(5).setCellValue(result.isEqual() ? "PASS" : "FAIL");
+        row.createCell(4).setCellValue(result.isEqual() ? "PASS" : "FAIL");
         XSSFCellStyle hlinkstyle = wb.createCellStyle();
         XSSFFont hlinkfont = wb.createFont();
         hlinkfont.setUnderline(XSSFFont.U_SINGLE);
         hlinkfont.setColor(IndexedColors.BLUE.index);
         hlinkstyle.setFont(hlinkfont);
 
-        XSSFCell cell = row.createCell(6);
+        XSSFCell cell = row.createCell(5);
         cell.setCellValue("Result File Link");
         link.setAddress(RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier + ".pdf");
         cell.setHyperlink(link);
         cell.setCellStyle(hlinkstyle);
+
+        row.createCell(6).setCellValue(result.isEqual() ? "" : result.getPagesWithDifferences().toString());
+        row.createCell(7).setCellValue(differences);
     }
 
     private static void createExcelSheetWithHeaders() {
@@ -140,26 +148,27 @@ public class Runner {
         rowhead.createCell(4).setCellValue("Status");
         rowhead.createCell(5).setCellValue("Result");
         rowhead.createCell(6).setCellValue("ErrorPages");
+        rowhead.createCell(7).setCellValue("Differences");
     }
 
-    private static void removeFirstPageAndSave(File secB, String identifier) {
+    private static void removeFirstPageAndSave(File secB,String path, String identifier) {
         PDDocument document = null;
         try {
             document = PDDocument.load(secB);
             document.removePage(0);
-            document.save(getRequiredBeforeFilePath(T24_SECB_REM_PAGE_1_PREFIX + identifier + ".pdf"));
+            document.save(path);
             document.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private static void mergeAstAndSecFiles(File astA, String identifier) {
+    private static void mergeAstAndSecFiles(String assetFilePath, String smrFilePath, String destinationPath) {
         PDFMergerUtility ut = new PDFMergerUtility();
         try {
-            ut.addSource(astA.getAbsolutePath());
-            ut.addSource(getRequiredBeforeFilePath(T24_SECB_REM_PAGE_1_PREFIX + identifier + ".pdf"));
-            ut.setDestinationFileName(getRequiredAfterFilePath(MERGED_FILE_PREFIX + identifier + ".pdf"));
+            ut.addSource(assetFilePath);
+            ut.addSource(smrFilePath);
+            ut.setDestinationFileName(destinationPath);
             ut.mergeDocuments();
         } catch (FileNotFoundException e) {
             throw new RuntimeException(e);
@@ -168,18 +177,64 @@ public class Runner {
         }
     }
 
-    private static CompareResult getComparedResult(File file, String identifier) {
+    private static CompareResult getComparedResult(String tapFilePath, String mergedFilePath, String resultFilePath ) {
         CompareResult result = null;
         try {
-            result = new PdfComparator(file.getAbsolutePath(),
-                    getRequiredAfterFilePath(MERGED_FILE_PREFIX + identifier + ".pdf")).withIgnore(EXCLUSIONS_CONF_FILE_PATH)
-                    .compare();
-            result.writeTo(RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier);
+            result = new PdfComparator(tapFilePath,mergedFilePath ).withIgnore(EXCLUSIONS_CONF_FILE_PATH).compare();
+            result.writeTo(resultFilePath);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
 
         return result;
+    }
+
+    private static String getAllDifferences(String tapFilePath, String mergedFilePath, CompareResult result) {
+        List<String> list = new ArrayList<>();
+        PDFUtil pdfUtil = new PDFUtil();
+
+        result.getPagesWithDifferences().forEach(pageNum -> {
+            try {
+                String[] str1 = pdfUtil.getText(mergedFilePath, pageNum, pageNum).split(" ");
+                String[] str2 = pdfUtil.getText(tapFilePath, pageNum, pageNum).split(" ");
+                updateStringDiff(str1, str2, list);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+
+        return list.toString();
+    }
+
+    private static void updateStringDiff(String[] str1, String[] str2, List<String> list) {
+        int maxLength = str1.length > str2.length ? str1.length : str2.length;
+//        List<String> differences = new ArrayList<>();
+        int startIndex = 0;
+        int startSecondIndex = 0;
+        for (int i = 1; i < maxLength; i++) {
+            String val1 = getStringVal(str1, startIndex, i);
+            String val2 = getStringVal(str2, startSecondIndex, i);
+
+            if (!val1.equals(val2)) {
+                String diff = StringUtils.difference(val1, val2);
+                if (!diff.isEmpty()) {
+                    list.add(diff);
+                }
+                startIndex = i + 1;
+                startSecondIndex = i + 1;
+            }
+
+        }
+    }
+
+    private static String getStringVal(String[] strArr, int startIndex, int endIndex) {
+        String value = "";
+        for (int i = startIndex; i <= endIndex; i++) {
+            String concat = strArr.length <= i ? "" : strArr[i];
+            value = value + concat;
+        }
+        return value;
     }
 
 
@@ -189,13 +244,17 @@ public class Runner {
 
     }
 
-    private static File[] readBeforeFiles() {
-        File folder = new File(System.getProperty("user.dir") + File.separator + "before");
+    private static File[] readBeforeAssetFiles() {
+        File folder = new File(System.getProperty("user.dir") + File.separator + "beforeAsset");
+        return folder.listFiles();
+    }
+    private static File[] readBeforeSMRFiles() {
+        File folder = new File(System.getProperty("user.dir") + File.separator + "beforeSMR");
         return folder.listFiles();
     }
 
-    private static String getRequiredBeforeFilePath(String fileName) {
-        return System.getProperty("user.dir") + File.separator + "before" + File.separator + fileName;
+    private static String getRequiredBeforeSMRFilePath(String fileName) {
+        return System.getProperty("user.dir") + File.separator + "beforeSMR" + File.separator + fileName;
     }
 
     private static String getRequiredAfterFilePath(String fileName) {
