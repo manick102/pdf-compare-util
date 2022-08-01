@@ -118,9 +118,9 @@ public class Runner {
         row.createCell(1).setCellValue(assetFile.getName());
         row.createCell(2).setCellValue(smrFile.getName());
         row.createCell(3).setCellValue(tapFile.getName());
+        row.createCell(4).setCellValue(result.isEqual() ? "PASS" : "FAIL");
 
         XSSFHyperlink link = (XSSFHyperlink) createHelper.createHyperlink(HyperlinkType.FILE);
-        row.createCell(4).setCellValue(result.isEqual() ? "PASS" : "FAIL");
         XSSFCellStyle hlinkstyle = wb.createCellStyle();
         XSSFFont hlinkfont = wb.createFont();
         hlinkfont.setUnderline(XSSFFont.U_SINGLE);
@@ -129,7 +129,9 @@ public class Runner {
 
         XSSFCell cell = row.createCell(5);
         cell.setCellValue("Result File Link");
-        link.setAddress(RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier + ".pdf");
+        String val = RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier + ".pdf";
+
+        link.setAddress(String.join("/",val.split("\\\\")));
         cell.setHyperlink(link);
         cell.setCellStyle(hlinkstyle);
 
@@ -190,14 +192,17 @@ public class Runner {
     }
 
     private static String getAllDifferences(String tapFilePath, String mergedFilePath, CompareResult result) {
-        List<String> list = new ArrayList<>();
+        AtomicReference<ArrayList<String>> list = new AtomicReference<ArrayList<String>>();
         PDFUtil pdfUtil = new PDFUtil();
 
         result.getPagesWithDifferences().forEach(pageNum -> {
             try {
                 String[] str1 = pdfUtil.getText(mergedFilePath, pageNum, pageNum).split(" ");
                 String[] str2 = pdfUtil.getText(tapFilePath, pageNum, pageNum).split(" ");
-                updateStringDiff(str1, str2, list);
+
+                updateStringDiff(str1, str2).forEach(strVal -> {
+                    list.get().add(strVal);
+                });
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -207,9 +212,9 @@ public class Runner {
         return list.toString();
     }
 
-    private static void updateStringDiff(String[] str1, String[] str2, List<String> list) {
+    private static List<String> updateStringDiff(String[] str1, String[] str2) {
         int maxLength = str1.length > str2.length ? str1.length : str2.length;
-//        List<String> differences = new ArrayList<>();
+        List<String> list = new ArrayList<>();
         int startIndex = 0;
         int startSecondIndex = 0;
         for (int i = 1; i < maxLength; i++) {
@@ -226,6 +231,7 @@ public class Runner {
             }
 
         }
+        return list;
     }
 
     private static String getStringVal(String[] strArr, int startIndex, int endIndex) {
