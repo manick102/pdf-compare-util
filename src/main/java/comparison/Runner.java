@@ -23,6 +23,7 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
 /**
@@ -91,8 +92,8 @@ public class Runner {
         String destinationFilePath = getRequiredAfterFilePath(MERGED_FILE_PREFIX + identifier + ".pdf");
         String resultFilePath = RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier;
 
-        removeFirstPageAndSave(smrFile,mergingFilePathTwo, identifier);
-        mergeAstAndSecFiles(mergingFilePathOne,mergingFilePathTwo, destinationFilePath);
+        removeFirstPageAndSave(smrFile, mergingFilePathTwo, identifier);
+        mergeAstAndSecFiles(mergingFilePathOne, mergingFilePathTwo, destinationFilePath);
         CompareResult result = getComparedResult(tapFile.getAbsolutePath(), destinationFilePath, resultFilePath);
         String differences = getAllDifferences(tapFile.getAbsolutePath(), destinationFilePath, result);
         updateExcelSheetWithResult(assetFile, smrFile, tapFile, identifier, result, rownum, differences);
@@ -131,12 +132,13 @@ public class Runner {
         cell.setCellValue("Result File Link");
         String val = RESULT_FILE_PATH + RESULT_FILE_PREFIX + identifier + ".pdf";
 
-        link.setAddress(String.join("/",val.split("\\\\")));
+        link.setAddress(String.join("/", val.split("\\\\")));
         cell.setHyperlink(link);
         cell.setCellStyle(hlinkstyle);
 
         row.createCell(6).setCellValue(result.isEqual() ? "" : result.getPagesWithDifferences().toString());
-        row.createCell(7).setCellValue(differences);
+        System.out.println(differences);
+        row.createCell(7).setCellValue(StringUtils.substring(differences, 0, 32767));
     }
 
     private static void createExcelSheetWithHeaders() {
@@ -153,7 +155,7 @@ public class Runner {
         rowhead.createCell(7).setCellValue("Differences");
     }
 
-    private static void removeFirstPageAndSave(File secB,String path, String identifier) {
+    private static void removeFirstPageAndSave(File secB, String path, String identifier) {
         PDDocument document = null;
         try {
             document = PDDocument.load(secB);
@@ -179,10 +181,10 @@ public class Runner {
         }
     }
 
-    private static CompareResult getComparedResult(String tapFilePath, String mergedFilePath, String resultFilePath ) {
+    private static CompareResult getComparedResult(String tapFilePath, String mergedFilePath, String resultFilePath) {
         CompareResult result = null;
         try {
-            result = new PdfComparator(tapFilePath,mergedFilePath ).withIgnore(EXCLUSIONS_CONF_FILE_PATH).compare();
+            result = new PdfComparator(tapFilePath, mergedFilePath).withIgnore(EXCLUSIONS_CONF_FILE_PATH).compare();
             result.writeTo(resultFilePath);
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -192,24 +194,27 @@ public class Runner {
     }
 
     private static String getAllDifferences(String tapFilePath, String mergedFilePath, CompareResult result) {
-        AtomicReference<ArrayList<String>> list = new AtomicReference<ArrayList<String>>();
+        ArrayList<String> list = new ArrayList<String>();
         PDFUtil pdfUtil = new PDFUtil();
-
-        result.getPagesWithDifferences().forEach(pageNum -> {
-            try {
-                String[] str1 = pdfUtil.getText(mergedFilePath, pageNum, pageNum).split(" ");
-                String[] str2 = pdfUtil.getText(tapFilePath, pageNum, pageNum).split(" ");
-
-                updateStringDiff(str1, str2).forEach(strVal -> {
-                    list.get().add(strVal);
-                });
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+        List<Integer> pages = (List<Integer>) result.getPagesWithDifferences();
+        if (pages.size() > 0) {
+            Iterator itr = pages.iterator();
+            while (itr.hasNext()) {
+                int pageNum = (int) itr.next();
+                try {
+                    String[] str1 = pdfUtil.getText(mergedFilePath, pageNum, pageNum).split(" ");
+                    String[] str2 = pdfUtil.getText(tapFilePath, pageNum, pageNum).split(" ");
+                    List<String> diff = updateStringDiff(str1, str2);
+                    if (diff.size() > 0) {
+                        list.addAll(diff);
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
-        });
+        }
 
-
-        return list.toString();
+        return list != null && list.size() > 0 ?  list.toString(): "";
     }
 
     private static List<String> updateStringDiff(String[] str1, String[] str2) {
@@ -254,6 +259,7 @@ public class Runner {
         File folder = new File(System.getProperty("user.dir") + File.separator + "beforeAsset");
         return folder.listFiles();
     }
+
     private static File[] readBeforeSMRFiles() {
         File folder = new File(System.getProperty("user.dir") + File.separator + "beforeSMR");
         return folder.listFiles();
