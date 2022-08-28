@@ -48,7 +48,7 @@ public class Runner {
     private static File[] tapFiles = readTapFiles();
 
     @BeforeSuite
-    public void setupExcelFile() {
+    public void suiteSetup() {
         createExcelSheetWithHeaders();
     }
 
